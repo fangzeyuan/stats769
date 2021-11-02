@@ -1,0 +1,268 @@
+---
+title: "lab9"
+author: "Zeyuan Fang"
+date: "10/6/2021"
+output: html_document
+---
+
+upi:zfan253\
+id:556588804\
+
+## Description of Data
+
+The data source for this lab is from UCI Machine Learning Repository. We are going to use the QSAR biodegradation data set, the description of which can be found here: https://archive.ics.uci.edu/ml/datasets/QSAR+biodegradation\
+
+The data set has 41 predictors (molecular descriptors) and one response variable class, which has two levels: RB (ready biodegradable) and NRB (not ready biodegradable).\
+
+To perform the following tasks, make sure we have loaded the following libraries:
+
+```{r}
+library(tree)
+library(randomForest)
+library(gbm)
+```
+
+## Training and Test Data
+
+#### Task1. Randomly divide the data set into two halves, and save them in two data frames named train and test.
+
+
+```{r}
+biodeg <- read.csv("biodeg.csv")
+biodeg$class <- as.factor(biodeg$class)
+n <- nrow(biodeg)
+set.seed(769)
+index <- sample(n,n/2)
+test <- biodeg[index,]
+train <- biodeg[-index,]
+```
+
+```{r}
+str(train)
+#str(test)
+```
+
+
+## Classification trees
+
+#### Task2. Fit an unpruned classification tree to the training data. Plot it (as pretty as you can). Identify three most important variables from this classification tree.
+
+```{r}
+(r = tree(class ~ . , data=train))  # Unpruned tree
+```
+
+```{r}
+plot(r)
+text(r, pretty=0)
+```
+
+SpMaxBm, NssssC, SpPosABp are the three most important variables from this classification tree.
+
+#### Task3. Compute the training and test errors.
+
+Since we are going to compute the training and test errors frequently below, write a simple R function named errors() that computes both training and test errors and can be re-used for any family of models, as long as there is a function to supply the class labels. For example, running the function here may look like:\
+
+```{r,eval=F}
+errors(fit, fhat.tree, train, test)
+```
+
+where fit is the output of tree() and fhat.tree is a function that uses fit and computes the class labels for a data set (an argument of fhat.tree).\
+
+Demonstrate that errors() and fhat.tree() works correctly for the unpruned tree.\
+
+```{r}
+fhat.tree<- function(fit,dataset){
+  if(length(grep("gbm",fit$call))!=0)
+    p <- predict(fit,dataset,type='response')
+  else 
+    p <- predict(fit,dataset)
+  if(class(p)=="matrix"){
+    yhat = levels(biodeg$class)[apply(p, 1, which.max)]
+    yhat
+  }
+  else if(class(p)== "factor"){
+    p
+  }
+  else if(class(p)=="numeric"){
+    yhat =levels(dataset$class)[(p > 0.5) + 1]
+  }
+  else{
+    warning("Prediction output is not expected ")
+  }
+}
+errors <- function(fit,fhat.tree,train,test){
+  yhat_train <- fhat.tree(fit,train)
+  yhat_test <- fhat.tree(fit,test)
+  errs <- c(train_error= mean(train$class!=yhat_train),test_error=mean(test$class!=yhat_test))
+  errs
+}
+errors(r,fhat.tree,train,test)
+```
+
+#### Task4. Consider pruning the tree using cross-validation with deviance. Produce a pruned tree based by selecting a cost-complexity parameter value, and plot it. Compute the training and test errors for this pruned tree. Do you think the pruning helps?
+
+```{r}
+set.seed(769)
+(cv.r = cv.tree(r))
+```
+
+```{r}
+j.min = which.min(cv.r$dev)
+k = cv.r$k[j.min]
+r2 = prune.tree(r, k=k)
+```
+
+```{r}
+plot(r2)
+text(r2, pretty=0)
+```
+
+```{r}
+errors(r2,fhat.tree,train,test)
+```
+
+Although the test error only decreased a little, we get a much simpler tree, so the pruned tree does help here.
+
+#### Taks5. Consider pruning the tree using cross-validation with misclassification rates. Produce a pruned tree by selecting a tree size, and plot it. Compute the training and test errors for this pruned tree. Do you think the pruning helps?
+
+```{r}
+set.seed(769)
+(cv.r = cv.tree(r, method="misclass"))    # use misclassification rate
+```
+
+
+```{r}
+# $dev are the numbers of misclassified observations
+j.min = max(which(cv.r$dev == min(cv.r$dev)))     # if more than one, usually choose the simplest model
+k = cv.r$k[j.min]
+(r3 = prune.tree(r, k=k, method="misclass"))  
+```
+
+
+```{r}
+plot(r2)
+text(r2, pretty=0)  
+```
+
+
+```{r}
+errors(r3,fhat.tree,train,test)
+```
+
+The pruned tree increase test error, hence it does not help here.
+
+## Bagging
+
+#### Task6. Produce a Bagging model for the training data with 500 trees construnted. What are the three most important variables, in terms of decreasing the Gini index, according to Bagging?
+
+```{r}
+set.seed(769)
+p <- ncol(biodeg)-1
+(r = randomForest(class ~ ., data=train,mtry=p, importance=TRUE))
+```
+
+```{r}
+impt <-round(importance(r), 2)
+impt[order(-impt[,4]),]
+```
+
+SpMaxBm, SpMaxL, SM6Bm are the three most important variables, in terms of decreasing the Gini index.
+
+#### Task7 Compute both the training and test errors of this Bagging predictor. Is your test error similar to the OOB estimate? Do you think Bagging helps prediction here?
+
+```{r}
+errors(r,fhat.tree,train,test)
+```
+
+OOB error
+
+```{r}
+mean(r$err.rate[,1])
+```
+
+The test error is smaller than OOB, which may implies that the test error is underestimated. However, no matter OOB error or test error show that Bagging really helps prediction here.
+
+## Random Forests
+
+#### Task8. Produce a Random Forest model with 500 trees constructed. What are the three most important variables, in terms of accuracy, according to Random Forest?
+
+```{r}
+set.seed(769)
+p <- ncol(biodeg)-1
+(r = randomForest(class ~ ., data=train,mtry=floor(sqrt(p)), importance=TRUE))
+```
+
+```{r}
+impt <-round(importance(r), 2)
+impt[order(-impt[,3]),]
+```
+
+SpMaxBm, SM6Bm, SpMaxL are the most important variable the three most important variables, in terms of accuracy, according to Random Forest.
+
+#### Task9. Compute both the training and test errors of this Random Forest predictor. Is your test error similar to the OOB estimate? Do you think the tweak used by Random Forest helps prediction here?
+
+```{r}
+errors(r,fhat.tree,train,test)
+```
+
+OOB error
+
+```{r}
+mean(r$err.rate[,1])
+```
+
+The test error is very close to OOB error. If we compare the OOB error between Bagging and Random Forest, since the OOB error of RF is smaller than that of Bagging, the tweak used by Random Forest helps prediction here.
+
+
+## Boosting
+
+#### task10. Produce a Boosting model, with 500 trees constructed.What are the three most important variables, according to Boosting?
+
+```{r}
+set.seed(769)
+# use distribution="bernoulli" for a two-class classification problem
+train2=cbind(train,class2=as.integer(train$class)-1)   # requires integer values 
+(r = gbm(class2 ~ . - class, data=train2, distribution="bernoulli", n.trees=500, interaction.depth=3))
+```
+
+```{r}
+summary(r)
+```
+
+SpMaxBm, SpPosABp, SM6Bm are the three most important variables, according to Boosting.
+
+
+#### Task11. Compute both the training and test errors of this Boosting predictor.Do you think Boosting helps prediction here?
+
+```{r}
+errors(r,fhat.tree,train,test)
+```
+
+Boosting helps prediction here since the test_error of Boosting is smaller than that of a single tree.
+
+#### Task12. Demonstrate that Boosting can overfit.
+
+```{r,message=FALSE}
+set.seed(769)
+number_tree <- seq(10,1000,10)
+errs <- data.frame(matrix(nrow=length(number_tree),ncol=2))
+names(errs) <- c("training_error","test_error")
+for(i in 1:length(number_tree)){
+  (r = gbm(class2 ~ . - class, data=train2, distribution="bernoulli", n.trees=number_tree[i], interaction.depth=3))
+  errs[i,]<- errors(r,fhat.tree,train,test)
+}
+
+```
+
+```{r}
+plot(number_tree,errs$training_error,type='l',ylim=c(0,max(errs$test_error)),xlab="Number of tree",ylab="Errors")
+lines(number_tree,errs$test_error,col='green')
+legend("topright",legend=c("training error","test error"),lty=1,col=c("black","green"))
+```
+
+From the plot, the test error reach minimum around 450 trees. Hence, the model with 500 trees gets over-fitting.
+
+
+## Summary 
+
+In this lab, we explored trees and Ensemble methods. First we randomly divide the data set into two halves, training set and test set. We will use training set for model training, and test set for evaluating the performance. Then we build a classification tree and pruned this tree based on deviance and mis-classification rates. For our data, a pruned tree based on mis-classification has lower training error(supposed), but higher test error. A pruned tree based on deviance has higher training error but lower test error. Next, we try three ensemble classifiers: Bagging, Random Forest, and Boosting. From the perspective the prediction error, all of them do better than a single tree classifier. Finally, we demonstrate that a 500-tree Boosting classifier will overfit the data.

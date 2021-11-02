@@ -1,0 +1,226 @@
+---
+title: "Lab6"
+author: "Zeyuan Fang"
+date: "9/15/2021"
+output: html_document
+---
+upi:zfan253\
+id:556588804\
+
+## Data Description
+
+This data set consists of three types of entities: (a) the specification of an auto in terms of various characteristics, (b) its assigned insurance risk rating, (c) its normalized losses in use as compared to other cars. The second rating corresponds to the degree to which the auto is more risky than its price indicates. Cars are initially assigned a risk factor symbol associated with its price. Then, if it is more risky (or less), this symbol is adjusted by moving it up (or down) the scale. Actuarians call this process "symboling". A value of +3 indicates that the auto is risky, -3 that it is probably pretty safe. \
+
+The third factor is the relative average loss payment per insured vehicle year. This value is normalized for all autos within a particular size classification (two-door small, station wagons, sports/speciality, etc...), and represents the average loss per car per year. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import
+
+na.string='?' will substitue question mark to NA.
+
+```{r}
+am.original <- read.csv('automobile-original.csv',na.string='?')
+am.subset <- read.csv('automobile-subset.csv')
+```
+
+Remove NA and subsetting.
+
+```{r}
+am.original <- am.original[complete.cases(am.original),]
+am.original <- subset(am.original,select=-engine.location)
+```
+
+Save and re-read.
+
+```{r}
+write.csv(am.original,"automobile.csv",row.names = F)
+am.original <- read.csv("automobile.csv")
+```
+
+check whether the two are the same.
+
+```{r}
+all(am.original==am.subset)
+```
+
+## Explore
+
+#### Q1 Produce a tidier file automobile.csv.
+
+
+
+We will use automobile.csv, so let us remove the object created by another identical file.
+
+```{r}
+rm(am.subset)
+ls()
+```
+
+Check the dimension of the dataframe.
+
+```{r}
+dim(am.original)
+```
+
+#### Q2 Write R code to answer the following questions:  
+
+##### What is the mean price (price) of all vehicles ?
+
+```{r}
+with(am.original,mean(price))
+```
+
+##### How many vehicles have 4 doors (num.of.doors)?
+
+```{r}
+with(am.original,sum(num.of.doors=='four'))
+```
+
+##### What are the different engine types (engine.type) among the observations?
+
+```{r}
+with(am.original,unique(engine.type))
+```
+
+##### How many vehicles have a price (price) higher than $20000?
+
+```{r}
+with(am.original,sum(price>20000))
+```
+
+##### What is the mean price (price) for “4wd” (drive.wheels)?
+
+```{r}
+with(am.original,mean(price[drive.wheels=='4wd']))
+```
+
+#### Q3 Produce pairwise scatterplots between variables normalized.losses, wheel.base, peak.rpm and price.
+
+```{r}
+pairs(am.original[,c("normalized.losses","wheel.base","peak.rpm","price")])
+```
+
+## Linear regression
+
+#### Q4 Produce the full linear regression model with all variables included. Comment on the outcome.
+
+```{r}
+am.fit <- lm(price~.,data=am.original)
+summary(am.fit)
+```
+The model is saturated, with many variables not statisticaly significant or NA parameters. We need remove some variables according to occam's razor.
+
+#### Q5 Remove any variable(s) that seem to cause the linear regression to fail, i.e., some coefficients may become NA. Repeat this until you can produce a meaningful “full” linear regression model (it is okay if you remove slightly more variables than necessary).
+
+```{r}
+am.fit2 <- lm(price~.-engine.type-num.of.cylinders-fuel.system-drive.wheels-num.of.doors-engine.size-bore-stroke-compression.ratio-horsepower-peak.rpm-city.mpg-highway.mpg-symboling-width,data=am.original)
+summary(am.fit2)
+```
+
+We manually find a model with all varibales statistical significant. 
+
+```{r}
+mean((predict(am.fit2) - am.original$price)^2)
+```
+
+## Subset Selection
+
+```{r}
+library(leaps)
+library(glmnet)
+```
+
+#### Q7 For the data (using your “full” set of variables), produce a subset linear regression model, using the backward selection and the AIC.
+
+```{r}
+am.bwd = regsubsets(price~.-engine.type-num.of.cylinders-fuel.system-drive.wheels-num.of.doors-engine.size-bore-stroke-compression.ratio-horsepower-peak.rpm-city.mpg-highway.mpg-symboling-width,am.original, nvmax=60, method="backward")
+
+```
+
+```{r}
+am.s <- summary(am.bwd)
+```
+
+```{r}
+am.bic <- am.s$bic
+am.k <- rowSums(am.s$which)
+n = nrow(am.original)
+am.aic <- am.bic +(2- log(n))*am.k
+```
+
+#### Q8 Apply the AIC-selected model to the data and compute the resulting MSE.
+
+```{r}
+best<- which.min(am.aic)
+beta <-coef(am.bwd,best)
+am.matrix = model.matrix(price~., data=am.original)
+am.matrix = am.matrix[,names(beta)]
+yhat = drop(am.matrix %*% beta) 
+resid = am.original$price - yhat
+(mse = mean(resid^2))
+```
+
+The mse of aic-selected model is larger than that of manully selected model.
+
+#### Q9 Create a plot that shows the predictions of your AIC-selected model against the response variable (price), using different colors for different levels of drive.wheels.
+
+```{r}
+colbox=c(NA)
+colbox = ifelse(am.original$drive.wheels=='4wd',1,colbox)
+colbox = ifelse(am.original$drive.wheels=='fwd',2,colbox)
+colbox = ifelse(am.original$drive.wheels=='rwd',3,colbox)
+plot(am.original$price,yhat,col=colbox,pch=20,las =1 ,xlab= 'Actual Price', ylab= "",main = 'Predcited vs Actual Price Plot' )
+title(ylab="Predicted price", line=3.3, cex.lab=1)
+abline(0,1)
+legend("bottomright",levels(am.original$drive.wheels),col=1:length(am.original$drive.wheels),pch=20)
+```
+
+## Lasso
+
+#### Q10 For the data (using your “full” set of variables), compute the Lasso model.
+
+```{r}
+x = am.matrix[,-1]     # remove the intercept term
+y = am.original$price
+(am.lasso = glmnet(x, y, alpha=1))  # alpha = 0, ridge regression
+```
+
+```{r}
+coef(am.lasso)
+```
+
+#### Q11 Create a coefficient profile plot of the coefficient paths that varies with the value of $\lambda$ (or log($\lambda$)).
+
+```{r}
+plot(am.lasso,xvar="lambda")
+```
+
+
+#### Q12 Choose 5 different $\lambda$-values within a seemingly reasonable range (with roughly 5 to 30 variables included) and compute the MSEs of the corresponding 5 Lasso subset models. Write R code to find out how many variables (excluding the intercept) are included in each Lasso subset model.
+
+```{r}
+mse_v = c(NULL)
+ind  = c(29,36,41,47,89)
+for (i in c(1:5)){
+  yhat = drop(predict(am.lasso, s=am.lasso$lambda[ind[i]], alpha=1, newx=x)) # extract coefficients
+  resid = am.original$price - yhat 
+  mse = mean(resid^2)
+  mse_v[i] =mse
+}
+mse_v
+
+```
+
+For the Lasso subset models, the number of variablesfare:
+
+```{r}
+am.lasso$df[ind]
+```
+
+
+## Summary
+
+In this lab, we mainly focus on linear regression using automobile dataset. First we remove na value and subset useful attributes. After having tidy dataset, we explore some statistical question about the data. Then we build a linear model including all variables and manually remove some unreasonable variables which we call it "full" model. Based on the "full model", we do subset selection according to AIC and lasso regression. From the perspective of mse, the "full model" is better than subset selection and lasso selected model.

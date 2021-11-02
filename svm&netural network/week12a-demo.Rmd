@@ -1,0 +1,132 @@
+---
+title: "Lecture (Week 12a): Support Vector Machines"
+output: html_document
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  comment = ''
+)
+```
+
+# 1. Data
+
+```{r, fig.dim = c(10, 8)}
+data(iris)
+head(iris)
+attach(iris)
+plot(iris[,-5], col=as.numeric(Species)+1, main="Iris Data")
+```
+
+```{r, fig.dim = c(8, 6)}
+plot(Petal.Length, Petal.Width, col=as.numeric(Species)+1, main="Iris Data")
+```
+
+# 2. Maximal Margin Classifiers
+
+```{r, fig.dim = c(10, 6)}
+library(e1071)
+
+formula = Species ~ Petal.Width + Petal.Length
+i = Species != "virginica"
+r = svm(formula, data=iris, subset=i, scale=FALSE,
+        kernel="linear", cost=1e100)
+summary(r)
+
+plot(r, iris[i,3:5])
+
+col = as.numeric(Species) + 1
+plot(Petal.Length, Petal.Width, col=col, main="Iris Data", asp=1)
+(beta = coef(r))                       # coefficients of the hyperplane
+abline(- beta[-2] / beta[2], lwd=2)    # show the hyperplane
+(s = r$index)                          # index of support vectors
+points(Petal.Length[s], Petal.Width[s], pch=20, cex=0.8, col=col[i][s])
+```
+
+# 3. Support Vector Machines: Two Classes
+
+## Linear decision boundary
+
+```{r, fig.dim = c(10, 6)}
+i = Species != "setosa"
+r = svm(formula, data=iris, subset=i, scale=FALSE,
+        kernel="linear", cost=1)
+summary(r)
+
+plot(r, iris[i,3:5])
+
+plot(Petal.Length, Petal.Width, col=col, main="Iris Data", asp=1)
+beta = coef(r)
+abline(- beta[-2] / beta[2], lwd=2)              # Maximal separating hyperplane
+s = r$index                    # indices of support vectors
+points(Petal.Length[i][s], Petal.Width[i][s], pch=20, cex=0.8, col=col[i][s])
+```
+
+## Nonlinear decision boundary
+
+```{r, fig.dim = c(10, 6)}
+i = Species != "setosa"
+r = svm(formula, data=iris, subset=i, scale=FALSE,
+        kernel="radial", cost=5, gamma=0.2,
+	probability=TRUE) 
+summary(r)
+plot(r, iris[i,3:5])
+```
+
+```{r}
+# Prediction
+
+head(predict(r))
+head(yhat <- predict(r, iris[i,3:4]))
+table(iris[i,5], yhat, exclude="setosa")       # confusion table
+head(attr(predict(r, iris[i,3:4], probability=TRUE), "probabilities"))
+
+```
+
+```{r, fig.dim = c(10, 6)}
+# plot the decision boundary in our own scatter plot
+
+plot(Petal.Length, Petal.Width, col=col, main="Iris Data", asp=1)  # scatter plot
+
+x = seq(min(Petal.Length), max(Petal.Length), len=101)
+y = seq(min(Petal.Width), max(Petal.Width), len=101)
+f = function(x, fit=r) {
+  data = data.frame(Petal.Length=x[,1], Petal.Width=x[,2])
+  attr(predict(fit, data, probability=TRUE), "probabilities")[,1]
+}
+z = matrix(f(expand.grid(x, y)), nrow=101)
+contour(x, y, z, levels=0.5, lwd=2, drawlabels=FALSE, add=TRUE)             # add decision boundary
+
+(s = r$index)                            # indices of support vectors
+points(Petal.Length[i][s], Petal.Width[i][s], pch=20, cex=0.8, col=col[i][s])
+```
+
+# 4. Support Vector Machines: 3 or More Classes
+
+```{r, fig.dim = c(10, 6)}
+r = svm(formula, data=iris, scale=FALSE,
+        kernel="radial", cost=5, gamma=0.2) 
+summary(r)
+plot(r, iris[,3:5])
+
+table(Species, predict(r))         # confusion table
+```
+
+# 4. Cross-validation
+
+```{r, fig.dim = c(10, 6)}
+set.seed(769)
+rt = tune(svm, formula, data=iris, kernel="radial", scale=FALSE,
+          ranges=list(cost=10^(-3:3), gamma=(1:10)*0.01))
+summary(rt)	   
+rt$best.parameters
+rt$best.model
+
+plot(rt$best.model, iris[,3:5])       # almost linear decision boundaries
+```
+	  
+
+```{r}
+detach(iris)
+```
+<hr/>
