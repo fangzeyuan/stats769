@@ -1,0 +1,224 @@
+---
+title: "lab2"
+author: "Zeyuan Fang"
+date: "8/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+UPI: zfan253 \
+ID :556588804\
+
+## A brief description of the data.
+
+The data source for this lab is the Waka Kotahi Open Data Portal. This provides different sorts of traffic data in a variety of formats. We will download one CSV file, Html file, and JSON file using R with the help of a web browser. 
+
+## Acquiring the data
+
+### 1 CSV download
+
+From the Developer Tools of Chrome, I can find the event list about requests and posts in "Network" tab. When I click 'Download' button, there is a request event, where I can find the target url.
+
+```{r eval=FALSE}
+download.file("https://opendata.arcgis.com/api/v3/datasets/b90f8908910f44a493c6501c3565ed2d_0/downloads/data?format=csv&spatialRefId=2193","traffic-monitoring-sites.csv")
+```
+
+### 2 HTML download     
+
+Copy "GeoService" url and get the target html link.
+
+```{r eval=FALSE}
+download.file("https://services.arcgis.com/CXBb7LAjgIIdcsPt/arcgis/rest/services/TMS_Telemetry_Sites/FeatureServer/0/query?outFields=*&where=1%3D1","traffic-daily-counts.html")
+```
+
+
+### 3 JSON API download
+
+click “Query (GET)” button and copy the url for that page.
+
+```{r eval=FALSE}
+download.file("https://services.arcgis.com/CXBb7LAjgIIdcsPt/arcgis/rest/services/TMS_Telemetry_Sites/FeatureServer/0/query?where=1%3D1&objectIds=&time=&resultType=none&outFields=*&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnDistinctValues=false&cacheHint=false&orderByFields=&groupByFieldsForStatistics=&outStatistics=&having=&resultOffset=&resultRecordCount=&sqlFormat=none&f=pjson&token=","traffic-daily-counts.json")
+
+```
+
+
+## Tasks
+
+### 4
+
+Read in the csv file.
+
+```{r}
+Traffic <- read.csv("traffic-monitoring-sites.csv")
+head(Traffic)
+```
+
+### 5
+
+Read in the local html file.  For the variables we want extract, they share same xpath("//table[@class = 'ftrTable']/tr") so I can't just extract them directly by their path. They are all in text of /tr. So I would like to use grep first to locate them, then I use gsub to remove the label name so that the data is left behind. 
+
+```{r}
+library(xml2)
+html <- read_html("traffic-daily-counts.html")
+extractVar <- function(label){
+  xpath <- "//table[@class = 'ftrTable']/tr"
+  span <-  xml_find_all(html,xpath)
+  text <-  xml_text(span)
+  index <- grep(label,text)
+  gsub(label,"",text[index])
+}
+site <- as.numeric(extractVar("siteID:"))
+class <- extractVar("classWeight:")
+count <- as.numeric(extractVar("trafficCount:"))
+DailyCnt <- data.frame(site, class, count)
+
+```
+
+
+```{r}
+head(DailyCnt)
+```
+```{r}
+dim(DailyCnt)
+```
+
+
+### 6
+
+Read in the json file. fromJSON will return a list object. In this list, there is a element called  "\$featrues\$attribute", which is exactly what we want.
+
+Then I  convert startDate from Unix timestamp to actual date. Note that it is not a standard unix timestamp, It's Unix timestmp*1e3. So we first divide it by 1e3, then use as.Data and as.POSIXlt to contert these timestamps to real dates.
+
+```{r}
+library(jsonlite)
+jsonResult <- fromJSON('traffic-daily-counts.json')
+DailyCnt2 <- jsonResult$features$attributes
+DailyCnt2$startDate <- as.Date(as.POSIXlt(DailyCnt2$startDate/1e3, origin="1970-01-01"))
+```
+
+```{r}
+head(DailyCnt2)
+```
+
+### 7
+
+##### Q : How many different days are in the data set?
+
+```{r}
+length(unique(DailyCnt2$startDate))
+```
+
+There are two different days.
+
+
+##### Q : How many different sites?
+
+```{r}
+length(unique(DailyCnt2$siteID))
+```
+
+There are 509 different sites.
+
+##### Q: How are the counts distributed?
+
+```{r}
+cnt <- density(DailyCnt2$trafficCount)
+plot(cnt,xlab='Counts',ylab='Frequency',main = "Counts distribution")
+```
+```{r}
+cat("The summary of counts\n\n")
+summary(DailyCnt2$trafficCount)
+
+```
+
+The range of counts is from 0 to 29741. Most of the counts are gathering around 141 to 4777 according to the 1st quantile and 3rd quantile of counts.
+
+##### Q: What about if we square-root the counts?
+
+We can do this since there is no negative values for counts(no data entry error).
+
+```{r}
+head(sqrt(DailyCnt2$trafficCount))
+```
+
+
+##### Q: What about if we split the data into light and heavy counts?
+
+```{r}
+summary(DailyCnt2$trafficCount[DailyCnt2$classWeight=="Heavy"])
+```
+
+```{r}
+summary(DailyCnt2$trafficCount[DailyCnt2$classWeight=="Light"])
+```
+
+It seems every stastics for light counts is higher than that of heavy counts.
+
+## Transform
+
+### 8.
+
+We take square root of counts and put it into our dataframe 
+
+```{r}
+DailyCnt2$scount <- sqrt(DailyCnt2$trafficCount)
+```
+
+## Model
+
+### 9.
+
+From previous tasks(task 7), we found the diffrence of counts for different class Weight car. Now we can model the relationship.
+
+```{r}
+index <- sample(rep(1:10, length.out=nrow(DailyCnt2)))
+train <- DailyCnt2[index > 1, ]
+test <- DailyCnt2[index == 1, ]
+
+RMSE <- function(obs, pred) {
+    sqrt(mean((obs - pred)^2))
+}
+
+obs <- test$scount
+predMean <- mean(train$scount)
+lmfit1 <- lm(scount ~ classWeight, train)
+predLM1 <- predict(lmfit1, test)
+```
+
+```{r}
+RMSE(obs, predMean)
+```
+
+
+```{r}
+RMSE(obs, predLM1)
+```
+
+The RMSE of our model is 22.06722, which is quite an unideal figure. However it is still smaller than the RMSE of the mean model.
+
+We couldn't fit a model that since test set has new level for siteRef.
+
+## Visualization
+
+### 10
+
+```{r}
+plot(scount ~ jitter(as.numeric(factor(classWeight))), test,
+     xlab="class", axes=FALSE)
+axis(2)
+axis(1, at=as.numeric(unique(factor(test$class))),
+     label=unique(factor(test$class)))
+abline(h=predMean, col="green")
+points(as.numeric(unique(factor(test$classWeight))), 
+       predict(lmfit1, data.frame(classWeight=unique(factor(test$classWeight)))),
+       pch=16, col="red")
+```
+
+The red points are our predictions for different class-weight cars. From this plot, it can tell why our model(although not good enough but) is better than the mean model(the green line). The simple overall mean overpredicts for almost all heavy (H) vehicle counts.
+
+## Summary
+
+In this lab, we explored the vehicle count data set for the third time. We respectively download one CSV file, Html file, and JSON file using R with the help of a web browser. Then we read in these files one by one and extract three dataframes using different techniques. For later tasks,  we use the data frame converted by JSON file and transform the Startdate variable to real dates.  We write some R codes to answer some information about variables of this dataframe and find the counts are related to the weight-class of cars. Next, we use a square-root transform on the counts to get a less skewed variable scount. We then fit a simple model using a training set and compared their performance on a test set. By visualization and RMSE, a simple model that predicts the vehicle count based on vehicle class performed better than a model based on the overall mean count, though this still leaves a lot of variation in the data unexplained.

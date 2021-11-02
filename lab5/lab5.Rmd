@@ -1,0 +1,235 @@
+---
+title: "lab5"
+author: "Zeyuan Fang"
+date: "8/28/2021"
+output: html_document
+---
+ID: 556588804\
+UPI:zfan253\
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("data.table")
+library("parallel")
+library("MatrixModels")
+```
+
+## Description of the Data
+
+The data source for this lab is a set of 31 CSV files containing 15-minute vehicle counts from January 2013 (/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv) to September 2020 (/course/NZTA/20200701_20200930_TMSTrafficQuarterHour.csv).
+
+### Task1
+
+```{r}
+path= "/course/NZTA"
+files <- list.files(path,pattern = "^[0-9]",full.names = T)
+head(files)
+```
+
+
+### Task2
+
+We read in all 31 files using lapply() and measure the time.
+
+```{r}
+readFile <- function(filename) {
+    countsDT <- fread(filename)
+    countsDT[, day := substr(startDatetime, 1, 11)][, .(count = sum(count)), .(day, siteRef, class)]
+}
+```
+
+```{r}
+
+system.time(trafficSeries <- do.call(rbind,lapply(files[1:5],readFile)))
+```
+
+```{r}
+dim(trafficSeries)
+```
+
+```{r}
+head(trafficSeries)
+```
+
+### Task3
+
+use mclapply and measure the time.
+
+```{r,eval=T}
+system.time(mctrafficSeries <- do.call(rbind,mclapply(files[1:5],readFile,mc.cores = 5)))
+```
+
+### Task4
+
+
+```{r,eval=T}
+dim(mctrafficSeries)
+```
+
+```{r,eval=T}
+head(mctrafficSeries)
+```
+
+### Task5
+
+use parLapply and measure the time.
+
+```{r,eval=T}
+system.time({
+  cl <- makeCluster(5)
+  clusterExport(cl, "files")
+  clusterExport(cl,"readFile")
+  clusterExport(cl,"fread")
+  cltrafficSeries <- do.call(rbind,parLapply(cl,files[1:5],readFile))
+  stopCluster(cl)
+})
+
+```
+
+### Task6
+
+Since we have overall 31 big files, and the number of cpu is more than 31. We can use 31 cores for this task.
+
+```{r,eval=T}
+system.time(
+traffic <- do.call(rbind,mclapply(files,readFile,mc.cores = 31))
+)
+```
+
+```{r,eval=T}
+gc()
+```
+
+```{r,eval=T}
+traffic <- traffic[, .(day, siteRef, class, scount = sqrt(count))]
+traffic <- traffic[!is.na(scount), ]
+```
+
+```{r,eval=T}
+dim(traffic)
+```
+
+```{r,eval=T}
+head(traffic)
+```
+
+The peak memory usage is creating traffic object since it comes from 31 files rather than 5.
+
+### Task7
+
+The size of the model matrix for scount~class model is $2710949\times2$, with Intercept column 1 and classL colunmn 0 or 1, and that for scount~class+siteRef is $2710949\times(\#Unique(siteRef)+2)$, where for every column of siteRef, it is a hot-vector and there is only one 1 and rest are all 0, hence we should use a sparse matrix.
+
+```{r,eval=T}
+ dim(model.Matrix(scount ~ class+siteRef, 
+                          data=traffic, sparse=TRUE))
+```
+
+### Task8
+
+```{r}
+index <- sample(rep(1:10, length.out=nrow(traffic)))
+sites <- levels(factor(traffic$siteRef))
+RMSE <- function(obs, pred) {
+    sqrt(mean((obs - pred[,1])^2,na.rm = T))
+}
+fitLM <- function(i) {
+    train <- traffic[index != i, ]
+    train[, siteRef := factor(siteRef, levels=sites)]
+    test <- traffic[index == i, ]
+    test[, siteRef := factor(siteRef, levels=sites)]
+    fit1 <- glm4(scount ~ class, data=train, sparse=TRUE)
+    coef1 <- coef(fit1)
+    rm(fit1)
+    fit2 <- glm4(scount ~ class + siteRef, data=train, sparse=TRUE)
+    coef2 <- coef(fit2)
+    rm(fit2)
+    pred1 <- model.Matrix(scount ~ class, 
+                          data=test, sparse=TRUE) %*% 
+                 coef1
+    pred2 <- model.Matrix(scount ~ class + siteRef, 
+                          data=test, sparse=TRUE) %*% 
+                 coef2
+    obs <- test$scount
+    #pred1
+    c( RMSE(obs,pred1), RMSE(obs,pred2))
+}
+```
+
+```{r,eval=T}
+system.time({
+  rmse <- do.call(rbind,lapply(1:10,function(i) fitLM(i)))
+})
+
+```
+
+The average RMSE for both models are:
+
+```{r,eval=T}
+(RMSE_m1 <-colMeans(rmse)[1])
+(RMSE_m2 <- colMeans(rmse)[2])
+```
+
+1.Unsurprisingly, mcallpy() is much faster than lapply().
+
+2.Comparing with gc() with task6, we only used around 20Mb(382.6Mb -364.3Mb) memory to save the result for task8(or task9). This is because lm.fit object is memory comsuming and we did gabbage collection by rm(fit) in every iteration.
+
+### Task9
+
+```{r,eval=T}
+system.time({
+  rmse <- do.call(rbind,mclapply(1:10,function(i) fitLM(i),mc.cores = 10))
+})
+```
+
+```{r,eval=T}
+(RMSE_m1 <-colMeans(rmse)[1])
+(RMSE_m2 <- colMeans(rmse)[2])
+```
+
+```{r,eval=T}
+gc()
+```
+
+### Task10
+
+
+```{r}
+fit <- glm4(scount ~ class + siteRef, data=traffic, sparse=TRUE)
+coefs <- coef(fit)
+rm(fit)
+pred <- model.Matrix(scount ~ class+siteRef, 
+                          data=traffic, sparse=TRUE) %*% coefs
+#pred <- pred[,1]
+#obs <- traffic$scount
+```
+
+```{r}
+traffic$pred <- pred[,1]
+traffic$site <- reorder(as.factor(traffic$siteRef), traffic$scount)
+trafficClass <- split(traffic, traffic$class)
+plotClass <- function(x, col) {
+   sites <- split(x, x$site, drop=TRUE)
+   siteMin <- sapply(sites, function(y) min(y$scount))
+   siteMax <- sapply(sites, function(y) max(y$scount))
+   pred <- sapply(sites, function(y) y$pred[1])
+   s <- as.numeric(factor(sapply(sites, function(y) y$siteRef[1]),
+                          levels=levels(x$site)))
+   segments(s, siteMin, s, siteMax, col=col)
+   points(s, pred, pch=16, cex=.2, col="red")
+}
+bg <- "grey10"
+par(bg=bg, mar=rep(2, 4))
+plot(traffic$site, traffic$scount, border=NA, ann=FALSE, axes=FALSE,
+     ylim=range(traffic$scount, traffic$pred))
+usr <- par("usr")
+rect(usr[1], usr[3], usr[2], usr[4], col=bg)
+box(col="white")
+plotClass(trafficClass[[1]], adjustcolor("yellow", alpha=.5))
+plotClass(trafficClass[[2]], adjustcolor("green", alpha=.5))
+```
+
+Plot of all of the data with the predictions from class + siteRef model
+
+## Summary
+
+In this lab, we focus on parallel computing. To test what's the fastest way for loading data, first we try on five of 31 files. We find using "forker" workers  is faster than using “cluster” of workers, which is faster than plain lapply(). Then we read all 31 files into a R data table using "forker" wokrers(mclapply), and transform it into our desiring table. Next,  we want to build models based on the data table. We notice that for the model size is proportional to the data size. Hence a model with more varialbe (or many levels variable) is memory-consuming. What we do is only keep the weights of the model(coefficients), and use Matrix Multiplication with sparse matrix to compute the prediction value. And for the modeling task, we also test the time difference between a single thread version(lapply) and a "forked" workers version(mclapply). Finally, we made a visulation and produce a plot of all of the data with the predictions from class + siteRef model .

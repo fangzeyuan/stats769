@@ -1,0 +1,182 @@
+---
+title: "lab4"
+author: "Zeyuan Fang"
+date: "8/22/2021"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(profvis)
+```
+
+UPI:zfan253\
+ID:556588804\
+
+## Description of the data
+
+The data source for this lab is a set of 31 CSV files containing 15-minute vehicle counts from January 2013 (/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv) to September 2020 (/course/NZTA/20200701_20200930_TMSTrafficQuarterHour.csv). We only use /course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv file for the content of this lab.
+
+### Task1
+
+```{r}
+#file <- "AugustTraffic.csv"
+file <- "/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv"
+system.time(countsDF<- read.csv(file))
+```
+
+
+```{r}
+system.time( countsDF<-read.csv(file,colClasses =c('factor','factor','factor','factor','integer','numeric') ))
+```
+
+We can read faster by telling read.csv() the type of each column in ahead.
+
+### Task2
+
+```{r}
+system.time(countsDT<-data.table::fread(file))
+```
+
+fread() is clearly faster than read.csv() for collapsed time, but what's strange is that the user time is longer, but after reading proc.time(), we know it is ok since elapsed time is the real time elasped sicne the process was started.
+
+### Task3
+
+```{r}
+profvis({
+countsDF$day <- as.Date(countsDF$startDatetime, format="%d-%b-%Y")
+dailyCountsDF <- aggregate(countsDF["count"], 
+                           countsDF[c("day", "siteRef", "class")],
+                           sum)    
+})
+
+```
+
+```{r}
+profvis({
+dailyCountsDT <- countsDT[, day := as.Date(startDatetime, format="%d-%b-%Y")][, sum(count), .(day, siteRef, class)]
+})
+
+
+```
+
+The bottleneck for both methods are call of as.Date() function which transforms the characters vector to Dates vector. Note that data frame way of doing it(method 1) is more expensive since it need call as.character.Date() to transform Dates back to factor when aggregating. If we can avoid transform characters to Date and transform back, the code will be faster.
+
+### Task4
+
+```{r} 
+profvis({
+countsDF$day <- substr(countsDF$startDatetime, 0,11)
+dailyCountsDF2 <- aggregate(countsDF["count"], 
+                           countsDF[c("day", "siteRef", "class")],
+                           sum)  
+})
+```
+
+```{r}
+profvis({
+dailyCountsDT2 <- countsDT[, day :=  substr(countsDT$startDatetime, 0,11)][, sum(count), .(day, siteRef, class)]
+})
+```
+
+Instead of using R “Dates” for the start dates, we just use substr to shorten the character values.
+
+### Task5
+
+```{r}
+nrow(dailyCountsDF)
+nrow(dailyCountsDF2)
+```
+
+```{r}
+nrow(dailyCountsDT)
+nrow(dailyCountsDT2)
+```
+
+
+```{r}
+head(dailyCountsDF[order(-dailyCountsDF$count),],10)
+```
+
+```{r}
+head(dailyCountsDF2[order(-dailyCountsDF2$count),],10)
+```
+
+```{r}
+head(dailyCountsDT[order(-dailyCountsDT$V1),],10)
+```
+
+```{r}
+head(dailyCountsDT2[order(-dailyCountsDT2$V1),],10)
+```
+
+My faster code prodeces the same result as the orginal code
+
+### Task6
+
+```{r}
+dailyCountsDF$scount <- sqrt(dailyCountsDF$count) 
+```
+
+### Task7
+
+```{r}
+profvis({
+RMSE <- function(obs, pred) {
+    sqrt(mean((obs - pred)^2))
+}
+
+index <- sample(rep(1:10, length.out=nrow(dailyCountsDF)))
+RMSE_cv_lm <- rep(0,10)
+RMSE_cv_mean_model <- rep(0,10)
+for(i in 1:10){
+  train <- dailyCountsDF[index != i, ]
+  test <- dailyCountsDF[index == i, ]
+  obs <- test$scount
+  lmfit <- lm(scount ~ class, train)
+  predLM1 <- predict(lmfit, test)
+  predMean <- mean(train$scount)
+  RMSE_cv_lm[i] <-  RMSE(obs, predLM1)
+  RMSE_cv_mean_model[i]  <- RMSE(obs,predMean)
+}
+
+})
+
+```
+
+The bottleneck for this task is creating the trainning set and model training. It is both time and memory consuming since we are creating a large object and raining on it.
+
+```{r}
+mean(RMSE_cv_lm)
+```
+
+```{r}
+mean(RMSE_cv_mean_model)
+```
+
+The mean of RMSE for linear model is smaller.
+
+### Task8
+
+```{r}
+predMean <- mean(dailyCountsDF$scount)
+plot(scount ~ jitter(as.numeric(factor(class))), dailyCountsDF,
+     col=rgb(0,0,0,.2),
+     xlab="class", axes=FALSE)
+axis(2)
+axis(1, at=as.numeric(unique(factor(dailyCountsDF$class))),
+     label=unique(factor(dailyCountsDF2$class)))
+abline(h=predMean, col="green")
+points(as.numeric(unique(factor(dailyCountsDF$class))), 
+       predict(lmfit, 
+               data.frame(class=unique(factor(dailyCountsDF$class)))),
+       pch=16, col="red")
+```
+
+The class model is better than a single overall mean (surprise!), but it leaves a lot of unexplained variability. The daily count data do look a lot less skewed though compared to the 15-minute count data.
+
+## Summary
+
+In this lab, we focus on measuring code efficency(running time). We find fread is much more faster than read.csv() even we assgin column types in head. Then for transorm, we find using as.Date() is very expensive, and we can substitue it by truncating the charaters, which is a cheapter operation. And we also find if we have to use it, data.table is a better choice than data frame. Then we move to model part, and we build 10-fold cross validation to calculate the mean-RMSE of liear model and predict-by-mean model. For this part, we find the bottlenecks are creating the trainning set(whose size is very close to the whole dataframe) and model training. Finally, we make a plot to show the prediction of both models against All of the data and find the linear model is inadequate but still better than predict by mean model.
+

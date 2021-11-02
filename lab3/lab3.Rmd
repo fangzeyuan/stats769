@@ -1,0 +1,215 @@
+---
+title: "lab3"
+author: "Zeyuan Fang"
+date: "8/15/2021"
+output: html_document
+---
+
+ID:555658804\
+UPI:zfan253\
+
+## Description of the data. 
+
+The data source for this lab is a set of 31 CSV files containing 15-minute vehicle counts from January 2013 (/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv) to September 2020 (/course/NZTA/20200701_20200930_TMSTrafficQuarterHour.csv). We mainly use /course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv file for most of the tasks in this lab.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### task1
+```{bash}
+du -ch /course/NZTA/[0-9]*
+```
+
+
+### task2
+
+```{bash}
+free -g
+```
+
+the Ubuntu 18.04 has  13G RAM available while the VM has around 160 RAM available when I use it.
+
+### task3
+
+```{r}
+countsDF <- read.csv("/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv")
+print(object.size(countsDF),units="auto")
+gc()
+```
+
+For a file with 537 MB on disk storage, we read it into R and convert it to a dataframe object, and this object will cost 445.6Mb memoery
+
+
+### task4
+
+```{r}
+countsDT <- data.table::fread("/course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv")
+print(object.size(countsDT),units="auto")
+gc()
+```
+
+The two dataframes have same size. According the document of fread, fread should be faster than read.csv().
+
+### task5
+
+```{r}
+countsDF$day <- as.Date(countsDF$startDatetime, format="%d-%b-%Y")
+dailyCountsDF <- aggregate(countsDF["count"], 
+                           countsDF[c("day", "siteRef", "class")],
+                           sum)
+print(object.size(dailyCountsDF),units="auto")
+```
+
+
+```{r}
+dailyCountsDT <- countsDT[, day := as.Date(startDatetime, format="%d-%b-%Y")][, sum(count), .(day, siteRef, class)]
+print(object.size(dailyCountsDF),units="auto")
+```
+
+
+```{bash}
+/usr/bin/time -f "%M" awk -F, 'NR > 1 {gsub(/ .+/,"",$3); print $1","$2","$3", "$6}' /course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv | sort -t, -k1,1 -k2,2 -k3,3 | awk '{a[$1]+=$2}END{for (i in a) print i,a[i]}' > /dev/null
+```
+
+Two R dataframes costs 2.3Mb for each, whiles command tool consumes around 4.18Mb memory
+
+### task6
+
+```{r}
+nrow(dailyCountsDF)
+```
+
+```{r}
+nrow(dailyCountsDT)
+```
+
+```{bash}
+awk -F, 'NR > 1 {gsub(/ .+/,"",$3); print $1","$2","$3", "$6}' /course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv | awk '{a[$1]+=$2}END{for (i in a) print i,a[i]}' | wc -l
+```
+
+
+```{r}
+head(dailyCountsDF[order(-dailyCountsDF$count),],10)
+```
+
+```{r}
+head(dailyCountsDT[order(-dailyCountsDT$V1),],10)
+```
+
+```{bash}
+awk -F, 'NR > 1 {gsub(/ .+/,"",$3); print $1","$2","$3", "$6}' /course/NZTA/20130101_20130331_TMSTrafficQuarterHour.csv | awk '{a[$1]+=$2}END{for (i in a) print i,a[i]}' | sort  -t, -k4,4 -nr | head -10
+```
+
+Three methods generates same result.
+
+### task7
+
+```{r}
+dailyCountsDF$scount <- sqrt(dailyCountsDF$count)
+```
+
+### task8
+
+```{r}
+library("profmem")
+
+index <- sample(rep(1:10, length.out=nrow(dailyCountsDF)))
+train <- dailyCountsDF[index > 1, ]
+test <- dailyCountsDF[index == 1, ]
+
+RMSE <- function(obs, pred) {
+    sqrt(mean((obs - pred)^2))
+}
+
+obs <- test$scount
+predMean <- mean(train$scount)
+lmfit1 <- lm(scount ~ class, train)
+predLM1 <- predict(lmfit1, test)
+lmfit2 <- lm(scount ~ class+siteRef, train)
+predLM2 <-predict(lmfit2,test)
+RMSE(obs, predMean)
+
+```
+
+```{r}
+p <- profmem(lm(scount ~ class,train))
+cat(sum(p$bytes,na.rm = T)/1e6, "Mb")
+```
+
+```{r}
+print(object.size(train),units="Mb")
+```
+
+We used about 14.8Mb memory during the model fit , wiht the trainning data size 2.8MB.
+
+### task9
+
+```{r}
+
+m1 <-model.matrix(lmfit1)
+m2 <-model.matrix(lmfit2)
+object.size(m1)
+```
+
+```{r}
+object.size(m2)
+```
+
+```{r}
+dim(m1)
+```
+
+```{r}
+dim(m2)
+```
+
+The memory for matrix of model is much larger becase model 1 has 2 columns but model 2 has  1327 columns and they have same number of rows.
+
+### task10
+
+```{r}
+gc()
+```
+
+Untill now, we have used 2.7G RAM for this single file, we will use around 80G RAM for all 31 files. This VM has 160G RAM available when I use it, which means one VM only could afford two students to do so. We also found that the most memory-consuming task is creating datframe and modelling. We can finish these tasks by streaming the data. biglm can fit the model by iteration. Given a list of csv files, we can read in one of them  and update the model at a time, finally get the model trained by all data.
+
+### task11
+
+```{r}
+test$pred <- RMSE(obs, predLM2)
+test$site <- reorder(as.factor(test$siteRef), test$scount)
+testClass <- split(test, test$class)
+
+plotClass <- function(x, col) {
+   sites <- split(x, x$site, drop=TRUE)
+   siteMin <- sapply(sites, function(y) min(y$scount))
+   siteMax <- sapply(sites, function(y) max(y$scount))
+   pred <- sapply(sites, function(y) y$pred[1])
+   s <- as.numeric(factor(sapply(sites, function(y) y$siteRef[1]),
+                          levels=levels(x$site)))
+   segments(s, siteMin, s, siteMax, col=col)
+   points(s, pred, pch=16, cex=.2, col="red")
+}
+
+bg <- "grey10"
+par(bg=bg, mar=rep(2, 4))
+plot(test$site, test$scount, border=NA, ann=FALSE, axes=FALSE,
+     ylim=range(test$scount, test$pred))
+usr <- par("usr")
+rect(usr[1], usr[3], usr[2], usr[4], col=bg)
+box(col="white")
+plotClass(testClass[[1]], adjustcolor("yellow", alpha=.5))
+plotClass(testClass[[2]], adjustcolor("green", alpha=.5))
+```
+
+
+## Summary
+
+In this lab, we respectively use linux tools du and free to get the file size in disk and RAM information on VM. Then we read in one big csv file by read.csv() and fread(),
+we found that the dataframe memory size does not change no matter which method we use.
+We also explore memory usage about transformation tasks like merging counts. For merging couts task, we found R object use less memory than shell command. Different method in R produce same object, hence same memory usage. Then we move to the modelling part, we found for a 2.8Mb training data, lm will create around 5 time larger, 14.8 MB 
+objects. Then we comput matrix size of different models, we found different levels of factor variable can make the matrix size much larger by increasing the number of columns for each level. Then we discuss a technique, data streaming, to deal with the whole dataset. Finnaly we made a acutally vs real visualization for diffrent models.
+
+
+

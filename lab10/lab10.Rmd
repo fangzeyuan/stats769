@@ -1,0 +1,314 @@
+---
+title: "lab10"
+author: "Zeyuan Fang"
+date: "10/12/2021"
+output: html_document
+---
+
+upi:zfan253\
+id:556588804\
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Description of Data 
+
+The data set has 5 numeric predictors and one response variable class, which has two levels: Nasal (nasal vowels) and Oral (oral vowels). The numerical variables have all be standardised (and followed with a rounding to 4 d.p.) to have mean 0 and standard deviation 1, as also in the original data set.
+
+```{r}
+phoneme = read.csv("phoneme.csv", stringsAsFactors=TRUE)
+```
+
+To perform the following tasks, we need load the following library:
+
+```{r}
+library(mclust)
+```   
+
+```{r}
+with(phoneme, pairs(phoneme[,-6], col=c(2,4)[Class], pch=c(1,3)[Class]))
+```
+
+
+
+## Visualisation
+
+#### Task1 When there are a large number of observations, observations of smaller classes may be overwhelmed in a scatterplot by those in larger classes. Therefore, one may prefer to plot the observations of larger classes first and then those of smaller ones, or for a two-class data set those of the majority class and then those of the minority one.
+
+We can sort the dataframe with class, so that the majority class will be drown first.
+
+```{r}
+phoneme <- phoneme[order(phoneme$Class),]
+with(phoneme, pairs(phoneme[order(Class),-6], col=c(2,4)[Class], pch=c(1,3)[Class]))
+```
+
+
+
+
+
+## Univariate Density Estimation
+
+#### Task2. Plot each of the kernel density estimate, by superimposing it on a histogram (with breaks=100), for V1, with the bandwidth values chosen by methods nrd0, ucv, bcv and SJ, respectively. Observe and discuss if both overfitting and underfitting can exist for a KDE.
+
+```{r}
+attach(phoneme)
+```
+
+```{r}
+hist(V1, freq=FALSE, breaks=100, 
+        col="gray80", border="white",
+        main="Denstiy Estimation", xlab="V1")
+methods <-c("nrd0", "ucv", "bcv", "SJ")
+for(bw in methods) {
+   lines(density(V1, bw=bw), col=match(bw,methods)+10, lwd=2)
+}
+cols <- which(methods==methods) +10
+legend("topright",legend = methods,col = cols,lwd=2)
+```
+
+#### Task3. Find the best normal mixture fit to V1 (according to the BIC), in both equal and varying variance subfamilies, with the number of components ranging from 1 to 20. Plot the fitted density, along with a histogram of the data. Does it look like a better or worse fit than the best of the KDEs?
+
+```{r}
+(r = densityMclust(V1, G=1:20))
+```
+
+
+```{r}
+plot.Mclust(r,"BIC")
+```
+
+Note that the mclust package compute BIC differently(Here, we need negate the bic first). According to BIC, both equal and varying variance pick Equal variance with 6 component.
+
+
+```{r}
+r2 = densityMclust(V1, G=6,modelNames="V")
+```
+
+```{r}
+x = seq(min(V1), max(V1), len=500)
+plot(r2, V1, "density", breaks=100, lwd=2, col=4)
+```
+
+Although the right tail of this plot is too smooth and does not fit to the density so well like the best of the KDEs(ucv or SJ) did. But for the modal（peak,middle) part, the normal mixture is more well-fitted. Overall,the normal mixture is better.
+
+## Multivariate density estimation
+
+#### Task4. For each of the two classes, find a density estimate in the equal variance subfamily of multivariate normal mixtures, with the number of components ranging from 1 to 9. Show each density in a pairwise plot of the data.
+
+```{r}
+r_e_c1 = densityMclust(phoneme[Class=='Nasal',1:5],G=1:9,modelNames="EEE")
+```     
+
+```{r}
+plot(r_e_c1,what="density", col=4, points.col="grey")
+```
+```{r}
+r_e_c2 = densityMclust(phoneme[Class=='Oral',1:5],G=1:9,modelNames="EEE")
+```
+
+```{r}
+plot(r_e_c2,what="density", col=4, points.col="grey")
+```
+
+####  Task5. Repeat Task 4, but for the varying variance subfamily of normal mixtures.
+
+```{r}
+r_v_c1 = densityMclust(phoneme[Class=='Nasal',1:5],G=1:9,modelNames="VVV")
+```     
+
+```{r}
+plot(r_v_c1,what="density",col=2, points.col="grey")
+```
+
+```{r}
+r_v_c2 = densityMclust(phoneme[Class=='Oral',1:5],G=1:9,modelNames="VVV")
+```
+
+```{r}
+plot(r_v_c2,what="density",col=2, points.col="grey")
+```
+
+#### Task6 By applying the fundamental rule of classification, we obtain immediately a classifier from Tasks 4 and 5, respectively. For each classifier, compute its resubstitution misclassification rate.
+
+We can build clasifier based on Bayes' rule. The density estimate(P(X|Y)) serve as the likelihood, and the sample proportions are the prior probability.\
+
+First, we compute resubstitution misclassification rate from  EEE model.
+
+```{r}
+p1 <- mean(Class=='Nasal')
+p2 <- 1-p1
+f_1 <- predict(r_e_c1,phoneme[,1:5])
+f_2 <- predict(r_e_c2,phoneme[,1:5])
+p<- f_1*p1/(f_1*p1+f_2*p2)
+p <- (p<0.5)+1
+mean(p==as.numeric(Class))
+```
+
+Then, we compute resubstitution misclassification rate from  EEE model.
+
+```{r}
+p1 <- mean(Class=='Nasal')
+p2 <- 1-p1
+f_1 <- predict(r_v_c1,phoneme[,1:5])
+f_2 <- predict(r_v_c2,phoneme[,1:5])
+a<- f_1*p1/(f_1*p1+f_2*p2)
+b<-f_2*p2/(f_1*p1+f_2*p2)
+p <- (a<0.5)+1
+mean(p==as.numeric(Class))
+```
+
+## K-means
+
+##### Task7. With the K-means method, find the clustering results with two clusters. Show the results in a pairwise plot of the data, using different colors and point types for observations of different clusters. (If you have successfully finished Task 1, then plot the majority cluster first.)
+
+First we standadize the data before using k-means.
+
+```{r}
+phoneme2 <- phoneme
+phoneme2[,1:5] <- scale(phoneme[,1:5])
+r0 = kmeans(phoneme2[,-6], centers=2)   
+
+```
+
+We reorder the dataframe based on cluster class.
+
+```{r}
+names(r0$cluster) <- 1:length(r0$cluster)
+phoneme2<- phoneme2[order(r0$cluster),]
+```
+
+```{r}
+pairs(phoneme2[,1:5], col=r0$cluster+1, pch=r0$cluster+1,main="K = 2 (Original Data)")
+```
+
+#### Task8. One might be curious to see if the clusters found by a clustering method are anywhere similar to the class labels that are also available in a data set (i.e., to examine the performance of an unsupervised learning method for a supervised learning problem).Compute the adjusted Rand indices for K=2,…,9 clusters as found by the K-means method, when the given class labels are contrasted. Comment on the results.
+
+```{r}
+ari = double(8)
+for(k in 2:9) {
+  r = kmeans(phoneme2[,1:5], centers=k)
+  ari[k-1] = adjustedRandIndex(phoneme2$Class, r$cluster)
+}
+ari
+```
+
+The ari values for k=2,..9 are really bad, which are results quite close to randomness. Hence the performance of k-means for this supervised learning problem  is quite bad.
+
+
+## Mixture-based clustering
+
+
+#### Task9. Using the varying variance subfamily of multivariate normal mixtures, find the clustering results with two clusters, and show the results in a pairwise plot as in Task 7.Also compute the adjusted Rand indices for K=2,…,9 clusters (as done in Task 8). 
+
+```{r}
+(r = densityMclust(phoneme[,1:5], G=2, modelNames="VVV"))
+```
+
+Make the majority class as 1, minority class as 2.
+
+```{r}
+classification <- r$classification%%2 +1 
+```
+
+```{r}
+names(classification) <- 1:length(classification)
+phoneme <- phoneme[order(classification),]
+```
+
+
+```{r}
+pairs(phoneme[,1:5], col=classification+1, pch=classification+1,main="K = 2 (Original Data)")
+```
+
+```{r}
+ari = double(8)
+# we should reverse the class level as 2-clusters does.
+for(g in 2:9) {
+  r = densityMclust(phoneme[,1:5], G=g, modelNames="VVV")
+  ari[k-1] = adjustedRandIndex(phoneme$Class, r$classification)
+}
+ari
+```
+
+The ari valus are also bad.
+
+
+ 
+## Hierarchical Clustering
+
+#### Task10. Produce a dendrogram of the hierarchical clustering results using the complete and the single linkage method, respectively.Explain why they look very much different.
+
+
+```{r}
+d <- dist(phoneme2[,-6])
+r0 = hclust(d)  
+```
+
+```{r}
+cex=1
+plot(r0, cex.axis=1, cex.lab=cex, cex.main=cex)   
+```
+
+
+```{r}
+r1 = hclust(d,method = 'single')  
+plot(r1, cex.axis=1, cex.lab=cex, cex.main=cex)  
+```
+
+"Single-linkage (nearest neighbor) is the shortest distance between a pair of observations in two clusters. It can sometimes produce clusters where observations in different clusters are closer together than to observations within their own clusters. These clusters can appear spread-out." 
+
+"Complete-linkage (farthest neighbor) is where distance is measured between the farthest pair of observations in two clusters. This method usually produces tighter clusters than single-linkage, but these tight clusters can end up very close together. Along with average-linkage, it is one of the more popular distance metrics." 
+
+^[Introduction to Hierarchical Clustering](https://towardsdatascience.com/introduction-hierarchical-clustering-d3066c6b560e0
+
+
+The two plots look very different since they use controversial metrics. single-linkage method use the closest pair of observations in two clusters as the between group distance, while complete-linkage use the farthest pair of observations in two clusters as the between group distance. Hence, the single-linkage method produce more spread-out clusters and complete-linkage produce tight clusters.
+
+
+#### Task11. Compute the adjusted Rand indices for K=2,…,9 clusters produced by the complete and the single linkage method, respectively (as done in Task 8).
+
+
+Complelte method 
+
+```{r}
+ari = double(8)
+for(c in 2:9) {
+  r = hclust(d) 
+  cluster <- cutree(r, c) 
+  ari[k-1] = adjustedRandIndex(phoneme$Class, cluster)
+}
+ari
+```
+
+Single method 
+
+```{r}
+ari = double(8)
+for(c in 2:9) {
+  r = hclust(d,'single') 
+  cluster <- cutree(r, c) 
+  ari[k-1] = adjustedRandIndex(phoneme$Class, cluster)
+}
+ari
+```
+
+
+
+#### Task12. Produce the heatmaps for both the complete and single linkage methods.
+
+complete method
+
+```{r}
+heatmap(as.matrix(phoneme[,-6]), scale="column", distfun=dist, hclustfun=hclust,
+        margins=c(15,5),add.expr =list(method='now') ,main = 'Heatmap for complete method')
+```
+```{r}
+heatmap(as.matrix(phoneme[,-6]), scale="column", distfun=dist, hclustfun = function(x) hclust(x,method = 'single'),
+        margins=c(15,5),add.expr =list(method='now'),main = 'Heatmap for single method')
+```
+
+## Summary 
+
+In this lab , we explored density estimation and clustering. First we compare kernel density estimate and univariate density estimation. Then we try multivariate density estimation for equal and varying variance subfamily for each of two levels of the target variable. After having a density estimation for Y|X, we can natural build a classifier based on Bayes' rule. Then we move to clustering. We try k-means, mixture-based clustering, and hierarchical clustering. For each clustering method, we compute the adjusted Rand indices, and all of them are bad, which means for this dataset, using an unsupervised learning method for classification is not a good idea. Last, we compare the two methods(single and complete method) for hierarchical clustering using dendrogram and heatmap.
+                    

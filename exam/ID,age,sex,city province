@@ -1,0 +1,20 @@
+ID,age,sex,city province
+000-1-10449,,,Haibei Prefecture,Qinghai
+000-1-1045,,,Pingdingshan City,Henan
+
+
+awk -F, 'NR!=1&& match($2,"-") {print $1,$5}' data.csv
+
+from the first 20 lines of linux-prosper.csv file, find those lines that contains "Tokyo", and count the number of thoes mathched lines. The output should be 8.
+
+2.(a)
+download.file("https://www.stat.auckland.ac.nz/stats769/2020/donations.html","donation.html")
+html <- read_html("donation.html")
+
+xpath <- "//table/tr/td[@class = 'num']"
+span <-  xml_find_all(html,xpath)
+text <-  xml_text(span)
+index <- grep(label,text)
+content <- gsub('$',"",text[index])
+gsub(',',"",content)
+result <- as.numeric(content)

@@ -1,0 +1,6 @@
+Rscript -e 'knitr::knit("lab9.Rmd")'
+pandoc --standalone --self-contained lab9.md > lab9.html
+
+ssh -X fosstatsprd03.its.auckland.ac.nz
+
+Rscript -e 'rmarkdown::render("lab10.Rmd")'

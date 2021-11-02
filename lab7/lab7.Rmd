@@ -1,0 +1,339 @@
+---
+title: "lab7"
+author: "Zeyuan Fang"
+date: "9/22/2021"
+output: html_document
+---
+upi:zfan253\
+id:556588804\
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+## Data desciption 
+
+We are going to the use a subset of the automobile data set that was used in Lab 6. In particular, the variables wheel.base, length, height, highway.mpg and price are considered in this lab. To concentrate, we can produce a subset data frame auto2 as follows:
+
+```{r}
+auto = read.csv("automobile.csv", stringsAsFactors=TRUE)
+auto2 = auto[,c("wheel.base", "length", "height", "highway.mpg", "price")]
+pairs(auto2)
+```
+
+## Tasks
+
+Loading packages..
+
+```{r}
+library(splines)
+library(gam)
+library(parallel)
+```
+
+## Modelling Nonlinear Relationship
+
+#### Q1.Find all polynomial regression models for degrees 1 to 5.
+
+```{r}
+polymodels <- list(NULL)
+for (i in 1:5){
+  print(r <- lm(price ~ poly(highway.mpg, i, raw=TRUE), data=auto2))
+  polymodels[[i]] =r
+}
+
+```
+
+#### Q2. Superimpose them all in one scatter plot of the data. What do you generally observe in the fitted curve when the polynomial degree increases?
+
+```{r}
+with(auto2,plot(highway.mpg,price,ylim=c(0,max(price)+1000),pch=20))
+for(i in 1:5){
+  m <- lm(price ~ poly(highway.mpg, i, raw=TRUE), data=auto2)
+  newX = data.frame(highway.mpg=seq(min(auto2$highway.mpg),max(auto2$highway.mpg),0.1))
+  pred <- predict(m,newX)
+  lines(newX$highway.mpg,pred,col=i+1)
+}
+legend("topright",paste("deg",1:5),col=1:5+1,lty=1)
+```
+As degree increases, the fitted curve get better fitting to the points.
+
+#### Q3. Find the BIC-selected polynomial regression model. (You may consider using the residuals provided by the lm() fit`.) Do you think this is a reasonable fit?
+
+```{r}
+n = nrow(auto2)
+lapply(1:5,function(i){
+  m<- lm(price~poly(highway.mpg,i),data=auto2)
+  #Use loglikelihood
+  #-2*logLik(m) + log(n)*length(m$coefficients)
+  
+  #use RSS
+  n*log(sum(m$residuals^2)) + log(n)*(length(m$coefficients))
+})
+```
+
+Here we use RSS to compute BIC instead of likelihood, and we ignored the constant.\
+BIC tells us the degree 2 model is the best.\
+Although it is not a good idea to use BIC for high-degree polynomials model selections, I think BIC happen to pick a reasonable model here,  since degree 1 is obviously under-fitting and has large bias. And high degree may cause over-fitting. Thus model with degree 2 is a reasonable model to me.
+
+## Generalised Additive Models
+
+#### Q4. Fit a GAM to the data set, using a smoothing spline with 5 degrees of freedom for each predictor variable: wheel.base, length, height, highway.mpg. Create the plots for all the additive terms in the model.
+
+```{r}
+(gam.m1 = gam(price ~ s(wheel.base, 5)+s(length, 5)+s(height,5)+s(highway.mpg,5), data=auto2))
+par(mfrow=c(2,2))
+plot(gam.m1)
+```
+
+
+#### Q5 Use your GAM to predict the price value for a new observation: wheel.base = 110, length = 190, height = 55, highway.mpg = 25.
+
+```{r}
+newdata <- data.frame(wheel.base = 110, length = 190, height = 55, highway.mpg = 25)
+predict(r,newdata)
+```
+
+#### Q6 Re-fit your GAM by adjusting manually the degrees of freedom of smoothing splines used for the additive terms until the fit visually looks reasonable to you. Provide some arguments.
+
+In these plots, the function of length looks rather linear. We can perform a series of ANOVA tests in order to determine which of these three models is best: a GAM that excludes length (M1), a GAM that uses a linear function of length (M2), or a GAM that uses a spline function of year (M3). 
+
+```{r,warning=FALSE}
+gam.m1 = gam(price ~ s(wheel.base, 2)+s(height,5)+s(highway.mpg,5), data=auto2)
+gam.m2 = gam(price ~ s(wheel.base, 2)+length+s(height,5)+s(highway.mpg,5), data=auto2)
+gam.m3 = gam(price ~ s(wheel.base, 5)+s(length,5)+s(height,5)+s(highway.mpg,5), data=auto2)
+anova(gam.m1,gam.m2,gam.m3,test="F")
+```
+
+We find that there is compelling evidence that a GAM with a linear function of length is better than a GAM that does not include year at all (p-value = 0.004272). However, there is no evidence that a non-linear function of year is needed (p-value = 0.125060). In other words, based on the results of this ANOVA, M2 is preferred.
+
+## Cross-validation for Regression Splines
+
+#### Q7 For cubic regression splines, let us consider using knots that are evenly distributed between the two extreme values (minimum and maximum) of the predictor variable, but excluding the two extreme values. That is, given the number of knots, m, we create the knots as follow:
+
+```{r}
+attach(auto2)
+m = 5            # number of knots
+(rg = range(highway.mpg)) 
+```
+
+```{r}
+(knots = seq(rg[1], rg[2], length=m+2)[-c(1,m+2)])
+```
+
+```{r}
+detach(auto2)
+```
+
+```{r}
+(r = lm(price ~ bs(highway.mpg, knots=knots, degree=3), data=auto2))
+```
+
+```{r}
+yhat = predict(r, newX)                 
+with(auto2, plot(highway.mpg, price))
+lines(newX$highway.mpg, yhat, col="red")
+points(knots, predict(r, data.frame(highway.mpg=knots)), col="red", pch=19)  # add knots
+```
+
+#### Q8. Use 10-fold cross-validation to find an appropriate value for m. Consider m = 1, 2, ..., 5 in your CV study. Explain why you have used the technique of same subsamples.
+
+Same subsamples does not change the variation of the estimated PE of any method, but it helps greatly when comparing their relative performance.
+
+```{r}
+M = 5
+n = nrow(auto2)
+R = 5
+K=10
+mse = matrix(nrow=R*K,ncol=M)
+
+test.set <- function(i, n, K=10) {
+  if(i < 1 || i > K) 
+    stop(" i out of range (1, K)")
+  start = round(1 + (i-1) * n / K)
+  end = ifelse(i == K, n, round(i * n / K))
+  start:end
+}
+
+test.set(2,n)
+
+
+```
+
+```{r,warning=FALSE}
+set.seed(769)           # set a random seed
+
+for(i in 1:R) {                  # for each repetition
+  ind = sample(n)
+  for(k in 1:K) {                # for each fold
+    index = ind[test.set(k, n, K)]
+    test = auto2[index,]
+    train = auto2[-index,]
+    for(m in 1:M) {     # for each number of knots (method)
+      rg = range(train$highway.mpg)
+      knots = seq(rg[1], rg[2], length=m+2)[-c(1,m+2)]
+      r = lm(price ~ bs(highway.mpg, knots=knots, degree=3), data=train)
+      yhat = predict(r, test)         # prediction for test data
+      mse[K*(i-1)+k,m] = mean( (test$price - yhat)^2 )
+    }
+  }
+}
+head(mse)
+```
+
+```{r}
+(pe = cbind(m=1:M, mse=colMeans(mse)))
+```
+
+```{r}
+(mmin = which.min(pe[,2]))
+```
+```{r}
+plot(pe[,1], pe[,2], type="l", xlab="number of knots", ylab="mse")
+```
+
+
+#### Q9. Find your final model and show it in a scatter plot of the two variables.
+
+My final model would use 5 knots. 
+
+```{r}
+attach(auto2)
+m = 5            # number of knots
+(rg = range(highway.mpg)) 
+(knots = seq(rg[1], rg[2], length=m+2)[-c(1,m+2)])
+detach(auto2)
+(r = lm(price ~ bs(highway.mpg, knots=knots, degree=3), data=auto2))
+yhat = predict(r, newX)                 
+with(auto2, plot(highway.mpg, price))
+lines(newX$highway.mpg, yhat, col="red")
+points(knots, predict(r, data.frame(highway.mpg=knots)), col="red", pch=19)  # add knots
+```
+
+## Jackknifing and Parallel Computing
+
+#### Q10. Use the Jackknifing technique (with a 90% for training and 10% for testing) to find an appropriate degree for polynomial regression as in Tasks 1-3. Use R = 200 as the number of repetitions. Show the curve of the selected model in a scatter plot of the data.
+
+```{r}
+n = nrow(auto2)
+k = round(n * 0.10)
+deg =1:5
+R = 200                  # number of repetitions
+mse = matrix(nrow=R, ncol=length(deg))   # pre-allocate space
+dim(mse)
+```
+
+```{r}
+set.seed(769)           # set a random seed
+
+for(i in 1:R) {
+    index = sample(n, k)
+    test = auto2[index,]
+    train = auto2[-index,]
+  for(j in deg) {
+    r = lm(price ~poly(highway.mpg,degree=j,raw=TRUE), data= train)
+    yhat = predict(r, test)     # prediction for test data
+    mse[i,j] = mean( (test$price - yhat)^2 )
+  }
+}
+head(mse)
+```
+
+```{r}
+(pe = cbind(deg=1:5, mse=colMeans(mse)))
+```
+```{r}
+(deg_min = which.min(pe[,2]))
+```
+
+The degree 3 of polynomial model is the best according to jackknifing.
+
+```{r}
+with(auto2,plot(highway.mpg,price,ylim=c(0,max(price)+1000),pch=20))
+m <- lm(price ~ poly(highway.mpg, 3, raw=TRUE), data=auto2)
+newX = data.frame(highway.mpg=seq(min(auto2$highway.mpg),max(auto2$highway.mpg),0.1))
+pred <- predict(m,newX)
+lines(newX$highway.mpg,pred,col='red')
+legend("topright",paste("deg",3),col='red',lty=1)
+```
+
+
+#### Q11. Rewrite/reorganise your code so that each repetition can be carried out independently. Perform the Jackknifing selection of the polynomial degree using parallel computing, with function mclapply().Compare the timings, when 1, 5, 10 or 20 cores are used (so you have to do this on a VM).
+
+```{r}
+n = nrow(auto2)
+k = round(n * 0.10)
+R = 200                  # number of repetitions
+mse = matrix(nrow=R, ncol=5)   # pre-allocate space
+deg =5
+set.seed(769) 
+lapply(c(1,5,10,20),
+function(nc) system.time({
+ 
+mse <- mclapply(1:R,function(x){
+  mse <- numeric(deg)
+  index = sample(n, k)
+  test = auto2[index,]
+  train = auto2[-index,]
+  for(j in 1:deg) {
+    r = lm(price ~poly(highway.mpg,degree=j,raw=TRUE), data= train)
+    yhat = predict(r, test)     # prediction for test data
+    mse[j] = mean( (test$price - yhat)^2 )
+  }
+  mse
+
+} ,mc.cores = nc)
+  mse = matrix(data=unlist(mse),nrow=R,ncol=deg,byrow=T)
+  pe = cbind(deg=1:5, mse=colMeans(mse))
+  print(paste("The selected degree is ",which.min(pe[,2])))
+}
+))
+```
+
+
+#### Q12. For results to be reproducible, it is better to use random seeds. Investigate and demonstrate how this can be achieved when mclapply() is used.
+
+If we put sample() in mclapply, we will get different samples for different mc.cores. \
+So a good idea is getting sample before mclapply(), then there is no random process in mclapply(), which can promise the result reproducible.
+
+
+
+```{r}
+
+n = nrow(auto2)
+k = round(n * 0.10)
+R = 200                  # number of repetitions
+mse = matrix(nrow=R, ncol=5)   # pre-allocate space
+deg =5
+set.seed(769) 
+samples_list <- lapply(1:R, function(i)index = sample(n, k))
+lapply(c(1,5,10,20),
+function(nc) system.time({
+  mse <- mclapply(samples_list,function(index){
+    mse <- numeric(deg)
+    for(j in 1:deg) {
+    test = auto2[index,]
+    train = auto2[-index,]
+    r = lm(price ~poly(highway.mpg,degree=j,raw=TRUE), data= train)
+    yhat = predict(r, test)     # prediction for test data
+    mse[j] = mean( (test$price - yhat)^2 )
+  }
+  mse
+
+} ,mc.cores = nc)
+#  skip.streams(nc)
+  mse = matrix(data=unlist(mse),nrow=R,ncol=deg,byrow=T)
+  pe = cbind(deg=1:5, mse=colMeans(mse))
+  print(paste("The selected degree is ",which.min(pe[,2])))
+}
+))
+```
+
+The selected degree is 3, which is a reproducible result and comply with the result of non-parallel computing.
+
+## Summary 
+
+In this lab, we explore non-linearity model and resampling techniques. First we try polynomial regression for different degrees and GAM model with smoothing spline. We train and test the best parameters setting for these models based on the entire data set. Then we bring in resampling methods like cross-validation and Jackknifing, which can offer us a more convincing result for fine-tuning model parameters. Since these resampling techniques need much more computation, we also consider using parallel computing to speed up and how to generate reproducible result in a parallel computing environment.

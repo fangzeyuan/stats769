@@ -1,0 +1,143 @@
+---
+title: "lab1"
+author: "Zeyuan Fang"
+date: "8/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+upi:zfan253\
+id:55658804\
+
+## Data Description 
+
+The data are counts of vehicles at different locations on state highways across New Zealand, provided in a file called lab01.csv\
+
+Every line in the file represents a count of the number of vehicles at a particular site during a 15-minute period. There are separate rows for different vehicle classes, heavy (H) and light (L), and separate rows for different “directions” (e.g., 1 and 2). The time period is described by the startDatetime and the endDatetime.
+
+## 1
+
+I may use the following commands to do this task :\
+
+mkdir  lab1\
+cd lab1\
+After this, I can put the csv file into lab1 directory and also create a Rmd file in it.
+
+## 2
+
+```{bash}
+du -sh lab01.csv
+wc -l lab01.csv
+```
+
+The size of the data file is about 22M and it contains 429689 lines.
+
+## 3
+```{bash}
+grep '08-AUG-2020' lab01.csv | wc -l
+
+```
+
+There are 141714 lines that contains 08-AUG-2020.
+For Lab Zero data, I may use \
+grep '08-AUG-2020' ../lab0/AugustTraffic-OLD.csv | wc -l \
+command to evalute it, and there are also 141714 lines.
+
+
+## 4
+```{bash}
+awk -F, '{print $3 }' lab01.csv| grep '08-AUG-2020'| wc -l
+```
+
+There are 140152 lines whose start time is 08-AUG-2020, which mean there are 1562 lines whose start time is not 08-AUG-2020 but its end time is. Let us have a look one of them.
+
+```{bash}
+awk -F, '!match($3,/^08-AUG-2020/) && match($4,/^08-AUG-2020/) {print $0}' lab01.csv > output
+head -n 1 output
+```
+
+
+## 5
+```{bash}
+awk -F, 'NR!=1 {print $1}' lab01.csv | sort|uniq -c
+```
+
+There are 184220 H and 245468 L, and there are not other values than H and L.
+
+## 6
+
+```{bash}
+echo 'class,siteRef,startDatetime,endDatetime,direction,count' > August8.csv
+ awk -F, '$3 ~ /^08-AUG-2020/ {print $0 }' lab01.csv >> August8.csv 
+ head August8.csv 
+ wc -l August8.csv
+```
+
+First we write the col names into a new file called August8.csv, then we use awk to append data into this file.
+
+## 7
+
+```{r}
+traffic <- read.csv('August8.csv')
+head(traffic)
+dim(traffic)
+```
+
+The result is the same as the required.
+
+## 8
+
+```{r}
+traffic$start <- as.POSIXlt(traffic$startDatetime,
+                           format="08-AUG-2020 %H:%M")
+table(traffic$start$mday)
+traffic <- subset(traffic, start$hour >= 8 & start$hour <= 18)
+traffic$scount <- sqrt(traffic$count)
+```
+
+In my enviroment, if I use the format "%d-%b-%Y %H:%M" then I will get NA for unknown reason. So I have to hard-code the fixed start day, which will work well for me.
+
+## 9 
+```{r}
+index <- sample(rep(1:10, length.out=nrow(traffic)))
+train <- traffic[index > 1, ]
+test <- traffic[index == 1, ]
+RMSE <- function(obs, pred) {
+    sqrt(mean((obs - pred)^2))
+}
+obs <- test$scount
+predMean <- mean(train$scount)
+lmfit1 <- lm(scount ~ class, train)
+lmfit2 <- lm(scount ~ class+siteRef, train)
+predLM1 <- predict(lmfit1, test)
+predLM2 <- predict(lmfit2, test)
+RMSE(obs, predLM1)
+```
+
+RMSE for Model with class 
+
+```{r}
+RMSE(obs, predLM2)
+```
+
+RMSE for Model with class and siteRef
+
+## 10
+
+```{r}
+par(mfrow = c(1, 2))
+plot(fitted.values(lmfit1),train$scount, xlab="predicted",ylab="actual",main = "Predicted vs Actual for model 1")
+abline(a=0,b=1,col='red')
+
+plot(fitted.values(lmfit2),train$scount, xlab="predicted",ylab="actual",main = "Predicted vs Actual for model 2")
+abline(a=0,b=1,col='red')
+```
+
+Clearly, the linear model with class and siteRef as regressors is better.
+
+## Summary 
+
+In this lab, we use some powerful linux tools like grep and awk to get some  information about our data file under some specific conditions, and we also use these tools to pre-process the original data file and create a subset of it called Traffic.csv. These work may also be done in R but should be slower and not fit for big data. Since we have a proper data file now, then we want to do the rest of work in R. First we import it into R, then do transformation on the dataframe to get a tidy one, and then build some models based on it. Last, we evaluate these models and make a visualization.
+
